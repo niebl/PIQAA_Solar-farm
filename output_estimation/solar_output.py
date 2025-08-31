@@ -5,7 +5,7 @@ import numpy as np
 import arcpy
 
 class Solar_panel:
-    def __init__(self, size, lat, lon, efficiency=0.2, tilt=None):
+    def __init__(self, size, lat, lon, cost, efficiency=0.2, tilt=None):
         self.lat = lat #lat of panel centroid
         self.lon = lon #lon of panel centroid
         self.size = size
@@ -13,26 +13,21 @@ class Solar_panel:
         self.dni = None
         self.dhi = None
         self.ghi = None
+        self.cost = cost
         if tilt is None:
             self.tilt = 90-lat #optimum tilt if none given
         else:
             self.tilt = tilt
         return
     
-    def set_irradiance_maps(self, dni, dhi, ghi):
-        # set irradiance maps
-        self.dni_map = dni
-        self.dhi_map = dhi
-        self.ghi_map = ghi
-    
     # panel: instance of class Solar_panel
     # gti: gti of solar panel adjusted to panels tilt. GTI (in kWh / m²) is daily total of yearly average.
     def yr_power_output(self, gti):
         # efficiency
-        kWh_out = (gti * 365) * self.efficiency #get single m² efficiency
-        kWh_out = kWh_out * self.size #scale to panel size
+        out = (gti * 365) * self.efficiency #get single m² efficiency
+        out = out * self.size #scale to panel size
 
-        return kWh_out
+        return out
 
     # https://www.researchgate.net/publication/236314649_From_global_horizontal_to_global_tilted_irradiance_How_accurate_are_solar_energy_engineering_predictions_in_practice
     # based on chapter 2 of cited work
@@ -64,7 +59,15 @@ class Solar_panel:
     def yr_avg_sun_zenith(self, lat):
         return lat + (23.5 / 2) #add (half of) earths tilt to the latitude
     
+    def set_irradiance_maps(self, dni, dhi, ghi):
+        # set irradiance maps
+        self.dni_map = dni
+        self.dhi_map = dhi
+        self.ghi_map = ghi
+
     def sample_irradiance(self, lat, lon, cache=None, dni_name="DNI.tif", dhi_name="DIF.tif", ghi_name="GHI.tif"):
+        # this method is too slow for large number of panels due to geoprocessing overhead
+        # keeping it around for reference.
         if self.dni_map and self.dhi_map and self.ghi_map:
             # if irradiance maps already exist, do the more efficient step
             # this is still rather slow
@@ -91,44 +94,39 @@ class Solar_panel:
             return(dni, dhi, ghi)
 
 
-def script_tool(input_panels, DNI_src, DNI_unit, DHI_src, DHI_unit, GHI_src, GHI_unit):
+def script_tool(input_panels, DNI_src, DHI_src, GHI_src, kwh_price, DNI_unit="kWh", DHI_unit="kWh", GHI_unit="kWh"):
     arcpy.SetProgressor("default", "beginning solar power output calculation")
     
     ## Loop through all panels in input feature group and create panel objects
     farm_panels = []
     keys = ["Shape@","Shape_Length","PANEL_COST","PANEL_EFF","TILT_DEG","AZIMUTH_DEG","PANEL_AREA_M2"]
-    # get irradiance maps
-    arcgis_map = arcpy.mp.ArcGISProject('CURRENT').listMaps('Map')[0]
-    dni_map = arcgis_map.listLayers("DNI.tif")[0].dataSource
-    dhi_map = arcgis_map.listLayers("DIF.tif")[0].dataSource
-    ghi_map = arcgis_map.listLayers("GHI.tif")[0].dataSource
-    
 
     arcpy.SetProgressor("default", "progressing solar panel features")
-    with arcpy.da.SearchCursor("solar_farm", keys) as cursor:
+    with arcpy.da.SearchCursor(input_panels, keys) as cursor:
         for row in cursor:
-            geom = row[0].projectAs(arcpy.SpatialReference(4326))
+            geom = row[0].projectAs(arcpy.SpatialReference(4326)) #reproject in case the previous toolbox used 3857 or something
             centroid = geom.centroid
             new_panel = Solar_panel(
                 size=row[6],
                 lat=centroid.Y,lon=centroid.X,
                 efficiency=row[3],
-                tilt=row[4]
+                tilt=row[4],
+                cost=row[2]
                 )
             farm_panels.append(new_panel)
-    print(len(farm_panels))
 
     ## sample irradiances for power output calculation
     # (this can't be done by class methods because it's slow one by one)
 
     arcpy.SetProgressor("default", "sampling irradiance values for each solar panel")
     # Prepare rasters
-    dni_raster = arcpy.Raster("DNI.tif")
-    dhi_raster = arcpy.Raster("DIF.tif")
-    ghi_raster = arcpy.Raster("GHI.tif")
-    dni_array = arcpy.RasterToNumPyArray(dni_raster)
-    dhi_array = arcpy.RasterToNumPyArray(dhi_raster)
-    ghi_array = arcpy.RasterToNumPyArray(ghi_raster)
+    def get_raster_array(irr_map):
+        raster = arcpy.Raster(irr_map)
+        return raster, arcpy.RasterToNumPyArray(raster)
+    
+    dni_raster, dni_array = get_raster_array(DNI_src)
+    dhi_raster, dhi_array = get_raster_array(DHI_src)
+    ghi_raster, ghi_array = get_raster_array(GHI_src)
 
     # For each point, convert x,y to row, col
     def transform_point_coords(x, y, raster):
@@ -152,18 +150,33 @@ def script_tool(input_panels, DNI_src, DNI_unit, DHI_src, DHI_unit, GHI_src, GHI
         
     ## Access functions to calculate power output of those
     arcpy.SetProgressor("default", "calculating power output of all solar panels")
-    total_yr_wh = 0
+    total_yr_kwh = 0
     for panel in farm_panels:
-        #TODO: implement user defined files
         # this samples irradiance values and calculates the global irradiance for the panel at its given tilt
         gti = panel.panel_gti(panel.ghi, panel.dni, panel.dhi)
-        panel_yr_wh = panel.yr_power_output(gti)
-        total_yr_wh += panel_yr_wh
+        panel_yr_kwh = panel.yr_power_output(gti)
+        total_yr_kwh = panel_yr_kwh + total_yr_kwh
+
+    ## Access functions to calculate costs of solar panels
+    total_farm_cost = 0
+    for panel in farm_panels:
+        total_farm_cost = total_farm_cost + panel.cost
+    total_farm_cost_string = f"total cost of solar panels: {total_farm_cost}€"
+
+    ## Calculate time-to-payoff for solar panel costs
+    # here a year is exactly 365 days, as that is used in the total_yr_kwh method
+    yrs_for_payoff = total_farm_cost / ((total_yr_kwh)*kwh_price)
+    days_for_payoff = yrs_for_payoff * 365
+    yrs_flr = math.floor(yrs_for_payoff)
+    days_remainder = math.ceil(days_for_payoff - (yrs_flr * 365))
+    payoff_string = f"time to payoff: {yrs_flr} years, {days_remainder} days"
 
     ## Return values to user
-    yr_kwh = round(total_yr_wh/1000 , 2)
+    yr_kwh = round(total_yr_kwh, 2)
     kwh_out_string = f"total yearly power output: {yr_kwh} kWh"
     arcpy.AddMessage(kwh_out_string)
+    arcpy.AddMessage(total_farm_cost_string)
+    arcpy.AddMessage(payoff_string)
 
     return
 
@@ -173,14 +186,22 @@ if __name__ == "__main__":
     # so far, most of the relevant infos are carried in the attribute table
     param_input_panels = arcpy.GetParameterAsText(0) 
    
-    param_DNI = arcpy.GetParameter(1) # tif input of irradiance maps
-    param_DNI_unit = arcpy.GetParameter(2) # whether it's Wh or kWh. default to kWh
-    param_DHI = arcpy.GetParameter(3)
-    param_DHI_unit = arcpy.GetParameter(4)
-    param_GHI = arcpy.GetParameter(5)
-    param_GHI_unit = arcpy.GetParameter(6)
+    param_DNI = arcpy.GetParameterAsText(1) # tif input of irradiance maps
+    #param_DNI_unit = arcpy.GetParameter(2) # whether it's Wh or kWh. default to kWh
+    param_DHI = arcpy.GetParameterAsText(2)
+    #param_DHI_unit = arcpy.GetParameter(4)
+    param_GHI = arcpy.GetParameterAsText(3)
+    #param_GHI_unit = arcpy.GetParameter(6)
+    param_kwh_price = arcpy.GetParameterAsText(4)
+
+    param_kwh_price = float(param_kwh_price)
 
     #TODO add support for files on disk
 
-    script_tool(param_input_panels, param_DNI, param_DNI_unit, param_DHI, param_DHI_unit, param_GHI, param_GHI_unit)
+    script_tool(
+        input_panels=param_input_panels, 
+        DNI_src=param_DNI, #param_DNI_unit, 
+        DHI_src=param_DHI, #param_DHI_unit, 
+        GHI_src=param_GHI, #param_GHI_unit,
+        kwh_price=param_kwh_price)
     #arcpy.SetParameterAsText(2, "Result")
