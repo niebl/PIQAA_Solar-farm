@@ -6,11 +6,13 @@ PIQAA final project - Group 13 - Ahmed, Almahdi, Niebl
 2. add the irradiance maps (DNI.tif, DIF.tif, GHI.tif) to the arcgis workspace
 
 ### solar farm layout tool
+
 input: 
-    - Feature layer - area of interest
-    - various parameters defining individual solar cells
+- Feature layer - area of interest
+- various parameters defining individual solar cells
+
 output: 
-    - Feature layer - group of solar cells
+- Feature layer - group of solar cells
 
 ![](doc_res/tool1_params.png)
 1. create your solar farm layout by defining an area of interest.
@@ -22,14 +24,16 @@ output:
 Only for use within Germany
 
 ### solar cost-benefit analysis tool
+
 input: 
-    - Feature layer - group of solar cells
-    - Raster data - irradiance maps that are used to derive panel energy output at said location (Solar resource map © 2021 Solargis (CC BY-SA 4.0))
-    - electricty price (that is expected as revenue per kWh)
+- Feature layer - group of solar cells
+- Raster data - irradiance maps that are used to derive panel energy output at said location (Solar resource map © 2021 Solargis (CC BY-SA 4.0))
+- electricty price (that is expected as revenue per kWh)
+
 output: 
-    - cost of entire solar farm
-    - yearly energy output (€/kWh)
-    - projected time until cost of solar farm is paid off
+- cost of entire solar farm
+- yearly energy output (€/kWh)
+- projected time until cost of solar farm is paid off
 
 ![](doc_res/tool2_params.png)
 1. add the previously created solar panel array as an intput 
