@@ -1,6 +1,18 @@
 # PIQAA_Solar-farm
 PIQAA final project - Group 13 - Ahmed, Almahdi, Niebl
 
+This readme file is also viewable in the projects github repository.
+https://github.com/niebl/PIQAA_Solar-farm
+
+This is a toolbox that allows for a rough planning of solar farms within predefined areas within Germany. Most importantly, it outputs an energy output estimation, estimated time for payoff for an array of solar cells that is placed at a given area of interest. This is supposed to be a tool to quickly aide in site-selection of solar farms. However, the logistical, administrative and electrical engineering tasks of solar farm design are not covered by this toolbox.
+
+As suggested in the elevator pitch sessions, the complexity of the toolset was toned down a little to keep it simple. For this reason complex modeling of solar incidence as well as overpass queries for obstacles were omitted. simple solar output estimation was implemented, as well as the ability to use feature layers to define areas (obstacles) to prevent solar panel placement. 
+
+## technical background
+The solar output calculations are based on Global tilted irradiance (https://en.wikipedia.org/wiki/Solar_irradiance), the power per m² that arrives on a surface with a given tilt at a given location. 
+The GTI for a solar panel is derived by the use of direct normal irradiance (DNI), diffuse horizontal irradiance (DHI) and global horizontal irradiance (GHI), as well as the panels location, tilt, and an assumed constant surface albedo of 0.15. 
+This is a simplified model that works using daily totals of yearly averages at a given location as sampled from the input raster data. More precise modeling is not performed.
+
 ## usage instructions
 1. add the toolbox to your arcgis workspace
 2. add the irradiance maps (DNI.tif, DIF.tif, GHI.tif) to the arcgis workspace
